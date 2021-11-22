@@ -92,7 +92,7 @@ sudo airport -z
 sudo airport -c$CHANNEL
 
 # capture a beacon frame from the AP
-sudo tcpdump "type mgt subtype beacon and ether src $BSSID" -I -c $CHANNEL -i $INTERFACE -w beacon.cap
+sudo tcpdump "type mgt subtype beacon and ether src $BSSID" -I -c 1 -i $INTERFACE -w beacon.cap
 
 # wait for the WPA handshake
 sudo tcpdump "ether proto 0x888e and ether host $BSSID" -I -U -vvv -i $INTERFACE -w handshake.cap
