@@ -80,7 +80,7 @@ done
 
 # set BSSID and channel for later use
 BSSID=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | grep -E -o "([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
-CHANNEL=$(sed -n '1!p' scan | sed ''"3"'q;d' | awk 'BEGIN {FS="([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"} ; { print $2 }' | awk '{print $2}' | cut -d "," -f 1)
+CHANNEL=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | awk 'BEGIN {FS="([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"} ; { print $2 }' | awk '{print $2}' | cut -d "," -f 1)
 
 # delete scan file
 rm scan
